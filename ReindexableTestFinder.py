@@ -2,6 +2,7 @@ import logging
 import re, sys
 import argparse, pathlib
 import enum
+import math
 
 class CheckType(enum.Enum):
     NORMAL =1
@@ -10,7 +11,7 @@ class CheckType(enum.Enum):
 
 class FileChecker(object):
     def __init__(self, onlySortingProblem, detailed, checkStepsCalledFromSubs):
-        self.mainStepRegex = re.compile(r"^\s*step\s*([0-9]+)\s*;.*")
+        self.mainStepRegex = re.compile(r"^\s*step\s*([0-9]+(.5)?)\s*;.*")
         self.subStartRegex = re.compile(r"^\s*sub\s+(.*)\s*")
         self._logger = logging.getLogger("Checker")
         self.onlySortingProblem = onlySortingProblem
@@ -31,13 +32,17 @@ class FileChecker(object):
         except:
             return self._printStepsWithEncoding(filePath)
 
+    def _niceConvertNumericString(self, string):
+        number=float(string)
+        return int(number) if number == math.floor(number) else number
+
     def _printStepsWithEncoding(self, filePath, encoding=None):
         steps = list()
         with open (filePath, "r", encoding=encoding) as scriptFile:
             for line in scriptFile:
                 match = self.mainStepRegex.search(line)
                 if (match):
-                    foundStepIndex = int (match.group(1))
+                    foundStepIndex = self._niceConvertNumericString(match.group(1))
                     steps.append(foundStepIndex)
         self._logger.info(f"    Steps: {steps}")
     
@@ -133,7 +138,7 @@ class FileChecker(object):
 
                 match = self.mainStepRegex.search(line)
                 if (match):
-                    foundStepIndex = int (match.group(1))
+                    foundStepIndex = self._niceConvertNumericString(match.group(1))
                     if self.subLevel > 0:
                         returnValue=False
                         stepsCalledFromSubs.append(foundStepIndex)
@@ -143,7 +148,7 @@ class FileChecker(object):
                             continue
 
                     if expectedStepIndex == 0 and foundStepIndex == 1:
-                        self._logger.debug ("Indexing from 1: this is legal")
+                        self._logger.debug("Indexing from 1: this is legal")
                         expectedStepIndex = foundStepIndex
                     if foundStepIndex == expectedStepIndex:
                         expectedStepIndex+=1
@@ -180,7 +185,7 @@ class FileChecker(object):
 
                 match = self.mainStepRegex.search(line)
                 if (match):
-                    foundStepIndex = int (match.group(1))
+                    foundStepIndex = self._niceConvertNumericString(match.group(1))
                     steps.append(foundStepIndex)
                     if biggestLastStepIndex is None or biggestLastStepIndex <= foundStepIndex:
                         biggestLastStepIndex = max (foundStepIndex, biggestLastStepIndex) if biggestLastStepIndex is not None else foundStepIndex
@@ -209,7 +214,7 @@ class FileChecker(object):
 
                 match = self.mainStepRegex.search(lines[lineIndex])
                 if (match):
-                    foundStepIndex = int (match.group(1))
+                    foundStepIndex = self._niceConvertNumericString(match.group(1))
                     if expectedStepIndex == 0 and foundStepIndex == 1:
                         self._logger.debug ("Indexing from 1: this is legal")
                         expectedStepIndex = foundStepIndex
