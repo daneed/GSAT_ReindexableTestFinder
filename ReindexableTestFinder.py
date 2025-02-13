@@ -20,13 +20,15 @@ class StepDescriptor (object):
         self.ownCheckpointReferences = dict()
     
     def __repr__(self):
-        myString = f'step {self.currentNumber}#{str(self.currentLine + 1)} Problems:'
+        myString = f'step {self.currentNumber}#{str(self.currentLine + 1)}'
         problems=list()
-        if self.currentNumber != self.expectedNumber : problems.append(f"NO->{self.expectedNumber}")
+        if self.currentNumber != self.expectedNumber : problems.append(f"REINDEX->{self.expectedNumber}")
         if self.isInBadPosition : problems.append("ORDER")
         if self.isDuplicate     : problems.append("DUPL")
         if self.subName is not None: problems.append(f"SUB:{self.subName}")
-        myString += '|'.join(problems)
+        problems = '|'.join(problems)
+        if len(problems) > 0:
+            myString += f' Problems: [{problems}]'
         return myString
 
     def isProblematic(self):
@@ -311,16 +313,15 @@ if __name__ == "__main__":
         for checkType in checkTypes:
             returnValue &= fileChecker.check(filePath, checkType)
         if not returnValue:
-            checkFailedCounter += 1
-            if args.detailed and not args.checkStepsCalledFromSubs:
-                fileChecker.printSteps(filePath)
-
             if args.checkStepsCalledFromSubs:
                 problematicSteps = list(filter(lambda x: x.subName is not None, list(fileChecker.stepDescriptorContainer.values())))
             else:
                 problematicSteps = list(filter(lambda x: x.isProblematic(), list(fileChecker.stepDescriptorContainer.values())))
 
             if len(problematicSteps) > 0:
+                checkFailedCounter += 1
+                fileChecker.printSteps(filePath)
+
                 #logger.info("    " + str (problematicSteps))
                 for problematicStep in problematicSteps:
                     logger.info("    Problematic " + str(problematicStep))
