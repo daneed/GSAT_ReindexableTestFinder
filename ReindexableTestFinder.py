@@ -39,6 +39,7 @@ class FileChecker(object):
     def __init__(self, onlySortingProblem, detailed, checkStepsCalledFromSubs):
         self.mainStepRegex = re.compile(r"^\s*step\s*([0-9]+(.5)?)\s*;.*")
         self.subStartRegex = re.compile(r"^\s*sub\s+(\S+)\s*(\(\))?(\{)?")
+        self.subStepRegex = re.compile(r"^\s*subStep\s*([0-9]+(.5)?)\s*;.*")
         self._logger = logging.getLogger("Checker")
         self.onlySortingProblem = onlySortingProblem
         self.detailed = detailed
@@ -116,6 +117,8 @@ class FileChecker(object):
             self.subStarted = True
             justWentIntoSub = True
             self.subStack.append(FileChecker.SubDescriptor (match.group(1), self.currentCurvyBraceLevel))
+            if line.strip().endswith(';'):
+                pass
 
         if self.subLevel > 0 or self.subStarted:
             self._processSpecialCharactersInLineInsideSub(line)
@@ -123,7 +126,7 @@ class FileChecker(object):
                 self.curvyBraceOpeningFound = False
                 self.subLevel += 1
                 self.subStarted = False
-            elif not self.subStarted and self.currentCurvyBraceLevel == self.subStack[-1].curvyBraceLevel:
+            elif not self.subStarted and self.curvyBraceOpeningFound and self.currentCurvyBraceLevel == self.subStack[-1].curvyBraceLevel:
                 self.lastSubName = self.subStack[-1].name
                 self.subStack.pop()
                 self.subLevel -= 1
@@ -151,7 +154,7 @@ class FileChecker(object):
             elif line[index] == '\"' and not _characterIsEscaped(line, index):
                 if self.currentSingleApostropheLevel == 0:
                     self.currentDoubleApostropheLevel = (self.currentDoubleApostropheLevel + 1) % 2
-            elif line[index] == '#':
+            elif line[index] == '#' and (index == 0 or line[index-1] != '$'):
                 if self.currentSingleApostropheLevel == 0 and self.currentDoubleApostropheLevel == 0:
                     break
             elif line[index] == '{' and not _characterIsEscaped(line, index):
@@ -171,9 +174,11 @@ class FileChecker(object):
 
         self._initSubChecking()
 
+
         with open (filePath, "r", encoding=encoding) as scriptFile:
             lines = scriptFile.readlines()
             for lineIndex in range (len(lines)):
+
                 checkSubResult = self._checkSub(lines[lineIndex])
                 if checkSubResult != FileChecker.CheckSubResult.NOEXTRAHANDLING:
                     if checkSubResult == FileChecker.CheckSubResult.SUBJUSTENDED:
@@ -185,7 +190,7 @@ class FileChecker(object):
                     continue
 
                 match = self.mainStepRegex.search(lines[lineIndex])
-                if (match):
+                if match:
                     foundStepIndex = self._niceConvertNumericString(match.group(1))
                     if lineIndex not in self.stepDescriptorContainer: self.stepDescriptorContainer[lineIndex] = StepDescriptor(lineIndex, foundStepIndex)
                     if self.subLevel > 0:
@@ -208,8 +213,12 @@ class FileChecker(object):
                         returnValue=False
                         if not self.detailed:
                             break
-                    
                     expectedStepIndex += 1
+                else:
+                    match = self.subStepRegex.search(lines[lineIndex])
+                    if match and lines[lineIndex].startswith('subStep') and self.subLevel == 0:
+                        logger.fatal(f"FATALIS HIBA, subStep van step szinten a fajlban, hogy rohadnal meg, ezt kell legeloszor javitani: {filePath.name}, sor: {lineIndex + 1}")
+                        return False
 
             if not returnValue:
                 if not checkOnlyStepsCalledFromSubs or (checkOnlyStepsCalledFromSubs and len(stepsCalledFromSubs) > 0):
