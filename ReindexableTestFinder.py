@@ -9,14 +9,39 @@ class CheckType(enum.Enum):
     DUPLICATE = 2 
     ORDER = 3
 
+class StepDescriptor (object):
+    def __init__(self, currentLine, currentNumber):
+        self.currentLine = currentLine
+        self.currentNumber = currentNumber
+        self.expectedNumber = currentNumber
+        self.isDuplicate = False
+        self.subName = None
+        self.isInBadPosition = False
+        self.ownCheckpointReferences = dict()
+    
+    def __repr__(self):
+        myString = f'step {self.currentNumber}#{str(self.currentLine + 1)} Problems:'
+        problems=list()
+        if self.currentNumber != self.expectedNumber : problems.append(f"NO->{self.expectedNumber}")
+        if self.isInBadPosition : problems.append("ORDER")
+        if self.isDuplicate     : problems.append("DUPL")
+        if self.subName is not None: problems.append(f"SUB:{self.subName}")
+        myString += '|'.join(problems)
+        return myString
+
+    def isProblematic(self):
+        return  self.currentNumber != self.expectedNumber or\
+                self.isDuplicate or self.subName is not None or self.isInBadPosition
+
 class FileChecker(object):
     def __init__(self, onlySortingProblem, detailed, checkStepsCalledFromSubs):
         self.mainStepRegex = re.compile(r"^\s*step\s*([0-9]+(.5)?)\s*;.*")
-        self.subStartRegex = re.compile(r"^\s*sub\s+(.*)\s*")
+        self.subStartRegex = re.compile(r"^\s*sub\s+(\S+)\s*(\(\))?(\{)?")
         self._logger = logging.getLogger("Checker")
         self.onlySortingProblem = onlySortingProblem
         self.detailed = detailed
         self.checkStepsCalledFromSubs = checkStepsCalledFromSubs
+        self.stepDescriptorContainer = dict()
 
     def check(self, filePath, checkType):
         self._logger.debug(f"Checking {filePath.name}...")
@@ -79,7 +104,7 @@ class FileChecker(object):
             self.subStack.append(FileChecker.SubDescriptor (match.group(1), self.currentCurvyBraceLevel))
 
         if self.subLevel > 0 or self.subStarted:
-            self._processSpecialCharactersInLineInsideSub (line)
+            self._processSpecialCharactersInLineInsideSub(line)
             if self.subStarted and self.curvyBraceOpeningFound:
                 self.curvyBraceOpeningFound = False
                 self.subLevel += 1
@@ -132,16 +157,19 @@ class FileChecker(object):
         self._initSubChecking()
 
         with open (filePath, "r", encoding=encoding) as scriptFile:
-            for line in scriptFile:
-                if self._checkSub(line):
+            lines = scriptFile.readlines()
+            for lineIndex in range (len(lines)):
+                if self._checkSub(lines[lineIndex]):
                     continue
 
-                match = self.mainStepRegex.search(line)
+                match = self.mainStepRegex.search(lines[lineIndex])
                 if (match):
                     foundStepIndex = self._niceConvertNumericString(match.group(1))
+                    if lineIndex not in self.stepDescriptorContainer: self.stepDescriptorContainer[lineIndex] = StepDescriptor(lineIndex, foundStepIndex)
                     if self.subLevel > 0:
                         returnValue=False
                         stepsCalledFromSubs.append(foundStepIndex)
+                        self.stepDescriptorContainer[lineIndex].subName = self.subStack[-1].name
                         if not self.detailed:
                             break
                         else:
@@ -150,16 +178,17 @@ class FileChecker(object):
                     if expectedStepIndex == 0 and foundStepIndex == 1:
                         self._logger.debug("Indexing from 1: this is legal")
                         expectedStepIndex = foundStepIndex
-                    if foundStepIndex == expectedStepIndex:
-                        expectedStepIndex+=1
-                    else:
+
+                    if foundStepIndex != expectedStepIndex:
                         expectedSteps.append(expectedStepIndex)
                         unexpectedSteps.append(foundStepIndex)
+                        self.stepDescriptorContainer[lineIndex].expectedNumber = expectedStepIndex
                         returnValue=False
                         if not self.detailed:
                             break
-                        else:
-                            expectedStepIndex=foundStepIndex
+                    
+                    expectedStepIndex += 1
+
             if not returnValue:
                 if not checkOnlyStepsCalledFromSubs or (checkOnlyStepsCalledFromSubs and len(stepsCalledFromSubs) > 0):
                     self._logger.info(f"Checking {filePath.name} CONTINUITY CHECK FAILED!")
@@ -179,18 +208,21 @@ class FileChecker(object):
         stepsInBadPosition = list()
         self._initSubChecking()
         with open (filePath, "r", encoding=encoding) as scriptFile:
-            for line in scriptFile:
-                if self._checkSub(line) or self.subLevel > 0:
+            lines = scriptFile.readlines()
+            for lineIndex in range (len(lines)):
+                if self._checkSub(lines[lineIndex]) or self.subLevel > 0:
                     continue
 
-                match = self.mainStepRegex.search(line)
+                match = self.mainStepRegex.search(lines[lineIndex])
                 if (match):
                     foundStepIndex = self._niceConvertNumericString(match.group(1))
+                    if lineIndex not in self.stepDescriptorContainer: self.stepDescriptorContainer[lineIndex] = StepDescriptor(lineIndex, foundStepIndex)
                     steps.append(foundStepIndex)
                     if biggestLastStepIndex is None or biggestLastStepIndex <= foundStepIndex:
                         biggestLastStepIndex = max (foundStepIndex, biggestLastStepIndex) if biggestLastStepIndex is not None else foundStepIndex
                     else:
                         stepsInBadPosition.append(foundStepIndex)
+                        self.stepDescriptorContainer[lineIndex].isInBadPosition = True
         if len(stepsInBadPosition) > 0:
              returnValue = False
              self._logger.info(f"Checking {filePath.name} ORDERCHECK FAILED! Those steps are in bad position: {' '.join ([str(step) for step in stepsInBadPosition])}")
@@ -215,12 +247,14 @@ class FileChecker(object):
                 match = self.mainStepRegex.search(lines[lineIndex])
                 if (match):
                     foundStepIndex = self._niceConvertNumericString(match.group(1))
+                    if lineIndex not in self.stepDescriptorContainer: self.stepDescriptorContainer[lineIndex] = StepDescriptor(lineIndex, foundStepIndex)
                     if expectedStepIndex == 0 and foundStepIndex == 1:
-                        self._logger.debug ("Indexing from 1: this is legal")
+                        self._logger.debug("Indexing from 1: this is legal")
                         expectedStepIndex = foundStepIndex
                     key = foundStepIndex
                     if key in duplicatesDict:
                         duplicatesDict[key] += 1
+                        self.stepDescriptorContainer[lineIndex].isDuplicate = True
                         if prevFoundLineIndex is not None and prevFoundLineIndex > duplicatesDict_lineIndices[key][-1] and lineIndex > prevFoundLineIndex:
                             duplicatesDict_sortingProblem.add(key)
                         duplicatesDict_lineIndices[key].append(lineIndex)
@@ -261,27 +295,39 @@ if __name__ == "__main__":
         checkTypes = [CheckType.NORMAL, CheckType.ORDER, CheckType.DUPLICATE]
     else:
         if args.checkNormal:
-            checkTypes.append (CheckType.NORMAL)
+            checkTypes.append(CheckType.NORMAL)
         if args.checkOrder:
-            checkTypes.append (CheckType.ORDER)
+            checkTypes.append(CheckType.ORDER)
         if args.checkDuplicates:
-            checkTypes.append (CheckType.DUPLICATE)
+            checkTypes.append(CheckType.DUPLICATE)
 
     checkFailedCounter = 0
-    fileChecker = FileChecker (args.onlySortingProblem, args.detailed, args.checkStepsCalledFromSubs)
+    fileChecker = FileChecker(args.onlySortingProblem, args.detailed, args.checkStepsCalledFromSubs)
     for filePath in pathlib.Path(args.folder).rglob("*.pl"):
         if filePath.parent.parent.name.startswith("_"):
             continue
         returnValue = True
+        fileChecker.stepDescriptorContainer.clear()
         for checkType in checkTypes:
             returnValue &= fileChecker.check(filePath, checkType)
         if not returnValue:
             checkFailedCounter += 1
             if args.detailed and not args.checkStepsCalledFromSubs:
                 fileChecker.printSteps(filePath)
-                print("")
+
+            if args.checkStepsCalledFromSubs:
+                problematicSteps = list(filter(lambda x: x.subName is not None, list(fileChecker.stepDescriptorContainer.values())))
+            else:
+                problematicSteps = list(filter(lambda x: x.isProblematic(), list(fileChecker.stepDescriptorContainer.values())))
+
+            if len(problematicSteps) > 0:
+                #logger.info("    " + str (problematicSteps))
+                for problematicStep in problematicSteps:
+                    logger.info("    Problematic " + str(problematicStep))
+                print('')
         #print(f"Test: {filePath.parent.parent.name}, Perl script: {filePath.name}")
 
     print (f"SUMMARY: Number of tests where any check is failed: {checkFailedCounter}")
+
     pass
 
