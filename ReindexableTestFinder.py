@@ -5,11 +5,11 @@ import enum
 import math
 
 class CheckType(enum.Enum):
-    NORMAL =1
+    NORMAL = 1
     DUPLICATE = 2 
     ORDER = 3
 
-class StepDescriptor (object):
+class StepDescriptor(object):
     def __init__(self, currentLine, currentNumber):
         self.currentLine = currentLine
         self.currentNumber = currentNumber
@@ -22,10 +22,10 @@ class StepDescriptor (object):
     def __repr__(self):
         myString = f'step {self.currentNumber}#{str(self.currentLine + 1)}'
         problems=list()
+        if self.subName is not None: problems.append(f"SUB:{self.subName}")
         if self.currentNumber != self.expectedNumber : problems.append(f"REINDEX->{self.expectedNumber}")
         if self.isInBadPosition : problems.append("ORDER")
         if self.isDuplicate     : problems.append("DUPL")
-        if self.subName is not None: problems.append(f"SUB:{self.subName}")
         problems = '|'.join(problems)
         if len(problems) > 0:
             myString += f' Problems: [{problems}]'
@@ -82,9 +82,15 @@ class FileChecker(object):
             case CheckType.DUPLICATE:
                 return self._duplicatesCheck(filePath, encoding)
             
-    class SubDescriptor (object):
+    class SubDescriptor(object):
         def __init__(self, name, level):
             self.name = name
+            curvyBracePos = self.name.find('{')
+            if curvyBracePos > -1:
+                self.name = self.name[0:curvyBracePos]
+            bracePos = self.name.find('(')
+            if bracePos > -1:
+                self.name = self.name[0:bracePos]
             self.curvyBraceLevel = level
             
     def _initSubChecking(self):
@@ -96,8 +102,14 @@ class FileChecker(object):
         self.subLevel = 0
         self.subStarted = False
         self.subStack = list () # maintaining the {} level, at start of a sub.
+        self.lastSubName = None
 
-    def _checkSub(self, line):
+    class CheckSubResult(enum.Enum):
+        SUBJUSTSTARTED = 1,
+        SUBJUSTENDED = 2,
+        NOEXTRAHANDLING = 3,
+
+    def _checkSub(self, line) -> CheckSubResult:
         match = self.subStartRegex.search(line)
         justWentIntoSub = False
         if match:
@@ -112,13 +124,14 @@ class FileChecker(object):
                 self.subLevel += 1
                 self.subStarted = False
             elif not self.subStarted and self.currentCurvyBraceLevel == self.subStack[-1].curvyBraceLevel:
+                self.lastSubName = self.subStack[-1].name
                 self.subStack.pop()
                 self.subLevel -= 1
-                return True
+                return FileChecker.CheckSubResult.SUBJUSTENDED #return True
 
             if justWentIntoSub:
-                return True
-        return False
+                return FileChecker.CheckSubResult.SUBJUSTSTARTED #return True
+        return FileChecker.CheckSubResult.NOEXTRAHANDLING
             
     def _processSpecialCharactersInLineInsideSub(self, line):
         def _characterIsEscaped(line, index):
@@ -161,7 +174,14 @@ class FileChecker(object):
         with open (filePath, "r", encoding=encoding) as scriptFile:
             lines = scriptFile.readlines()
             for lineIndex in range (len(lines)):
-                if self._checkSub(lines[lineIndex]):
+                checkSubResult = self._checkSub(lines[lineIndex])
+                if checkSubResult != FileChecker.CheckSubResult.NOEXTRAHANDLING:
+                    if checkSubResult == FileChecker.CheckSubResult.SUBJUSTENDED:
+                        subStepIndex = 1
+                        for k, v in self.stepDescriptorContainer.items():
+                            if v.subName == self.lastSubName:
+                                v.expectedNumber = subStepIndex
+                                subStepIndex += 1
                     continue
 
                 match = self.mainStepRegex.search(lines[lineIndex])
